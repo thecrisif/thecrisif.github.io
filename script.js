@@ -6,6 +6,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getDatabase, ref, set, get, onValue, update }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
+// ============================================================
+// FIREBASE CONFIG
+// ============================================================
 const firebaseConfig = {
   apiKey: "AIzaSyACr8sCnegUV0aqO6Ubrol7KMoq1wcJ_Pg",
   authDomain: "ludo-thecrisif.firebaseapp.com",
@@ -20,11 +23,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
 
+// ============================================================
+// CONSTANTES
+// ============================================================
 const COLS = { red:"#e74c3c", blue:"#2980b9", green:"#27ae60", yellow:"#f1c40f" };
-const COLOR_ORDER = ["red","blue","green","yellow"];
 const DICE_FACES = ["⚀","⚁","⚂","⚃","⚄","⚅"];
 const SIZE = 15;
-const TURN_SECONDS = 50;
 
 const HOME_POS = {
   red:    [[2,2],[2,4],[4,2],[4,4]],
@@ -51,17 +55,17 @@ function generatePath() {
 }
 const PATH = generatePath();
 
-let myColor   = "red";
-let myName    = "Jugador";
-let roomId    = null;
-let myRole    = null;
+// ============================================================
+// ESTADO
+// ============================================================
+let myColor = "red";
+let myName  = "Jugador";
+let roomId  = null;
+let myRole  = null;
 let gameState = null;
 let diceValue = 0;
-let rolled    = false;
-let myTurn    = false;
-let timerInterval = null;
-let timerSeconds  = TURN_SECONDS;
-let activePlayers = [];
+let rolled = false;
+let myTurn = false;
 
 const canvas = document.getElementById("board");
 const ctx    = canvas.getContext("2d");
@@ -80,10 +84,9 @@ window.createRoom = async function() {
   roomId = Math.floor(1000+Math.random()*9000).toString();
   myRole = "host";
   const state = buildInitialState();
-  state.players = { [myColor]: { name: myName, color: myColor } };
+  state.host = { name: myName, color: myColor };
   state.turn = myColor;
   state.status = "waiting";
-  state.turnStarted = Date.now();
   await set(ref(db,`rooms/${roomId}`), state);
   document.getElementById("room-code-text").textContent = roomId;
   document.getElementById("room-display").style.display = "block";
@@ -98,24 +101,20 @@ window.joinRoom = async function() {
   const snap = await get(ref(db,`rooms/${roomId}`));
   if(!snap.exists()){ showToast("❌ Sala no encontrada"); return; }
   const data = snap.val();
-  const takenColors = Object.keys(data.players || {});
-  if(takenColors.includes(myColor)) {
-    const free = COLOR_ORDER.find(c => !takenColors.includes(c));
-    if(!free){ showToast("❌ Sala llena (máx 4)"); return; }
-    myColor = free;
+  if(data.host && data.host.color === myColor) {
+    const others = Object.keys(COLS).filter(c=>c!==myColor);
+    myColor = others[0];
   }
-  const updatedPlayers = { ...(data.players||{}), [myColor]: { name: myName, color: myColor } };
-  const newStatus = Object.keys(updatedPlayers).length >= 2 ? "playing" : "waiting";
   await update(ref(db,`rooms/${roomId}`), {
-    players: updatedPlayers,
-    status: newStatus
+    guest: { name: myName, color: myColor },
+    status: "playing"
   });
   listenRoom();
 };
 
 function buildInitialState() {
   const pieces = {};
-  COLOR_ORDER.forEach(col=>{
+  Object.keys(COLS).forEach(col=>{
     pieces[col] = [
       {pos:-1,finished:false},{pos:-1,finished:false},
       {pos:-1,finished:false},{pos:-1,finished:false}
@@ -132,8 +131,6 @@ function listenRoom() {
     if(!snap.exists()) return;
     const data = snap.val();
     gameState = data;
-    activePlayers = COLOR_ORDER.filter(c => data.players && data.players[c]);
-
     if(data.status==="playing" && document.getElementById("lobby").style.display!=="none") {
       startGame(data);
     }
@@ -141,43 +138,9 @@ function listenRoom() {
       myTurn = data.turn === myColor;
       updateUI(data);
       drawBoard(data);
-      if(myTurn && data.status==="playing") startTimer(data);
-      else stopTimer();
     }
     if(data.status==="won") showWin(data.winner===myColor);
   });
-}
-
-// ============================================================
-// TIMER
-// ============================================================
-function startTimer(data) {
-  stopTimer();
-  const elapsed = Math.floor((Date.now() - (data.turnStarted||Date.now())) / 1000);
-  timerSeconds = Math.max(0, TURN_SECONDS - elapsed);
-  updateTimerUI();
-  timerInterval = setInterval(async ()=>{
-    timerSeconds--;
-    updateTimerUI();
-    if(timerSeconds <= 0) {
-      stopTimer();
-      showToast("⏰ ¡Tiempo agotado! Turno perdido");
-      await passTurn();
-    }
-  }, 1000);
-}
-
-function stopTimer() {
-  clearInterval(timerInterval);
-  timerInterval = null;
-}
-
-function updateTimerUI() {
-  const el = document.getElementById("timer");
-  if(el) {
-    el.textContent = myTurn ? `⏱ ${timerSeconds}s` : "";
-    el.style.color = timerSeconds <= 10 ? "#e74c3c" : "#FFD700";
-  }
 }
 
 // ============================================================
@@ -186,11 +149,12 @@ function updateTimerUI() {
 function startGame(data) {
   document.getElementById("lobby").style.display = "none";
   document.getElementById("game").style.display  = "block";
+  const host  = data.host  || {};
+  const guest = data.guest || {};
   document.getElementById("my-dot").style.background  = COLS[myColor];
-  document.getElementById("my-name-label").textContent = myName;
-  const rivals = activePlayers.filter(c=>c!==myColor);
-  document.getElementById("opp-dot").style.background = rivals.length ? COLS[rivals[0]] : "#ccc";
-  document.getElementById("opp-name-label").textContent = rivals.length ? (data.players[rivals[0]]?.name||"Rival") : "Esperando...";
+  document.getElementById("opp-dot").style.background = COLS[myRole==="host"? guest.color||"blue" : host.color||"red"];
+  document.getElementById("my-name-label").textContent  = myName;
+  document.getElementById("opp-name-label").textContent = myRole==="host"? (guest.name||"Rival") : (host.name||"Rival");
   drawBoard(data);
 }
 
@@ -201,7 +165,6 @@ function updateUI(data) {
   const rollBtn  = document.getElementById("roll-btn");
   const statusEl = document.getElementById("status-msg");
   const turnLbl  = document.getElementById("turn-label");
-  const currentName = data.players?.[data.turn]?.name || data.turn;
   if(myTurn) {
     turnLbl.textContent = "🎲 ¡Tu turno!";
     if(!rolled) {
@@ -212,7 +175,7 @@ function updateUI(data) {
       statusEl.textContent = `Sacaste ${data.roll} — ¡elige una ficha!`;
     }
   } else {
-    turnLbl.textContent = `⏳ Turno de ${currentName}`;
+    turnLbl.textContent = "⏳ Turno del rival";
     rollBtn.disabled = true;
     statusEl.textContent = "Esperando al rival...";
   }
@@ -266,7 +229,6 @@ window.handleBoardClick = function(e) {
 // MOVER
 // ============================================================
 async function movePiece(idx) {
-  stopTimer();
   const pieces = JSON.parse(JSON.stringify(gameState.pieces));
   const p = pieces[myColor][idx];
   if(p.pos===-1 && diceValue===6) p.pos = START_IDX[myColor];
@@ -274,9 +236,10 @@ async function movePiece(idx) {
     p.pos += diceValue;
     if(p.pos>=52){ p.pos=52; p.finished=true; }
   }
+  // Comer rival
   if(p.pos>=0 && p.pos<52){
     const [rr,rc] = PATH[p.pos];
-    activePlayers.forEach(col=>{
+    Object.keys(COLS).forEach(col=>{
       if(col===myColor) return;
       pieces[col].forEach(rp=>{
         if(rp.pos>=0&&rp.pos<52){
@@ -287,25 +250,23 @@ async function movePiece(idx) {
     });
   }
   const allDone = pieces[myColor].every(p=>p.finished);
-  const nextT = diceValue===6 ? myColor : nextTurn(myColor);
-  const updates = { pieces, movedPiece:idx, turn: nextT, turnStarted: Date.now() };
+  const updates = { pieces, movedPiece:idx };
   if(allDone){ updates.status="won"; updates.winner=myColor; }
+  else { updates.turn = diceValue===6 ? myColor : nextTurn(myColor); }
   await update(ref(db,`rooms/${roomId}`), updates);
   rolled=false; diceValue=0;
   document.getElementById("dice").textContent="⚀";
 }
 
 async function passTurn() {
-  stopTimer();
-  const next = nextTurn(myColor);
-  await update(ref(db,`rooms/${roomId}`),{ turn: next, turnStarted: Date.now() });
+  await update(ref(db,`rooms/${roomId}`),{ turn:nextTurn(myColor) });
   rolled=false; diceValue=0;
   document.getElementById("dice").textContent="⚀";
 }
 
 function nextTurn(cur) {
-  const idx = activePlayers.indexOf(cur);
-  return activePlayers[(idx+1) % activePlayers.length];
+  const order=["red","blue","green","yellow"];
+  return order[(order.indexOf(cur)+1)%4];
 }
 
 function getMovablePieces(val, pieces) {
@@ -326,9 +287,9 @@ function drawBoard(data) {
   ctx.clearRect(0,0,W,W);
   ctx.fillStyle="#f9f3e3"; ctx.fillRect(0,0,W,W);
   drawPathCells(cs);
-  drawHomeZones(cs, data);
+  drawHomeZones(cs);
   drawCenter(cs);
-  if(data&&data.pieces) drawPieces(data.pieces, cs, data);
+  if(data&&data.pieces) drawPieces(data.pieces,cs);
   if(myTurn&&rolled&&data) highlightMovable(data.pieces[myColor],cs);
 }
 
@@ -348,27 +309,25 @@ function drawPathCells(cs) {
   });
 }
 
-function drawHomeZones(cs, data) {
-  const zones={ red:{r:0,c:0}, blue:{r:0,c:9}, green:{r:9,c:9}, yellow:{r:9,c:0} };
-  const players = data?.players || {};
+function drawHomeZones(cs) {
+  const zones={
+    red:{r:0,c:0},blue:{r:0,c:9},
+    green:{r:9,c:9},yellow:{r:9,c:0}
+  };
   Object.entries(zones).forEach(([col,z])=>{
-    const isActive = !!players[col];
-    const x=z.c*cs, y=z.r*cs;
-    const baseColor = isActive ? COLS[col] : "#999";
-    ctx.fillStyle = isActive ? baseColor+"33" : "#cccccc44";
+    const x=z.c*cs,y=z.r*cs;
+    ctx.fillStyle=COLS[col]+"33";
     ctx.fillRect(x,y,cs*6,cs*6);
-    ctx.strokeStyle=baseColor; ctx.lineWidth=2;
+    ctx.strokeStyle=COLS[col]; ctx.lineWidth=2;
     ctx.strokeRect(x+1,y+1,cs*6-2,cs*6-2);
-    const cx2=x+cs*3, cy2=y+cs*3;
+    const cx2=x+cs*3,cy2=y+cs*3;
     ctx.beginPath(); ctx.arc(cx2,cy2,cs*2,0,Math.PI*2);
-    ctx.fillStyle = isActive ? baseColor+"55" : "#bbbbbb44";
-    ctx.fill();
-    ctx.strokeStyle=baseColor; ctx.lineWidth=1.5; ctx.stroke();
-    ctx.fillStyle=baseColor;
-    ctx.font=`bold ${cs*0.45}px Fredoka One,cursive`;
+    ctx.fillStyle=COLS[col]+"55"; ctx.fill();
+    ctx.strokeStyle=COLS[col]; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle=COLS[col];
+    ctx.font=`bold ${cs*0.5}px Fredoka One,cursive`;
     ctx.textAlign="center"; ctx.textBaseline="middle";
-    const label = isActive ? (players[col]?.name||col).toUpperCase() : "—";
-    ctx.fillText(label, cx2, cy2);
+    ctx.fillText(col.toUpperCase(),cx2,cy2);
   });
 }
 
@@ -391,10 +350,8 @@ function drawCenter(cs) {
   ctx.fillText("👑",7.5*cs,7.5*cs);
 }
 
-function drawPieces(allPieces, cs, data) {
-  const players = data?.players || {};
+function drawPieces(allPieces,cs) {
   Object.entries(allPieces).forEach(([col,pieces])=>{
-    if(!players[col]) return;
     pieces.forEach((p,i)=>{
       if(p.finished) return;
       let row,col2;
@@ -431,7 +388,6 @@ function highlightMovable(pieces,cs) {
 // WIN
 // ============================================================
 function showWin(iWon) {
-  stopTimer();
   const ws=document.getElementById("win-screen");
   ws.style.display="flex";
   document.getElementById("win-text").textContent  = iWon?"¡GANASTE! 🏆":"Perdiste 😢";
@@ -449,5 +405,6 @@ function showToast(msg) {
 }
 window.showToast=showToast;
 
+// Dibujo inicial
 drawBoard(null);
-     
+    
