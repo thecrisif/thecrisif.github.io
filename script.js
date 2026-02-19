@@ -29,6 +29,7 @@ const db  = getDatabase(app);
 const COLS = { red:"#e74c3c", blue:"#2980b9", green:"#27ae60", yellow:"#f1c40f" };
 const DICE_FACES = ["⚀","⚁","⚂","⚃","⚄","⚅"];
 const SIZE = 15;
+const TURN_TIME = 30; // segundos igual que Ludo Club
 
 const HOME_POS = {
   red:    [[2,2],[2,4],[4,2],[4,4]],
@@ -58,17 +59,74 @@ const PATH = generatePath();
 // ============================================================
 // ESTADO
 // ============================================================
-let myColor = "red";
-let myName  = "Jugador";
-let roomId  = null;
-let myRole  = null;
+let myColor   = "red";
+let myName    = "Jugador";
+let roomId    = null;
+let myRole    = null;
 let gameState = null;
 let diceValue = 0;
-let rolled = false;
-let myTurn = false;
+let rolled    = false;
+let myTurn    = false;
+
+// Timer
+let turnTimer    = null;
+let timerSeconds = TURN_TIME;
 
 const canvas = document.getElementById("board");
 const ctx    = canvas.getContext("2d");
+
+// ============================================================
+// JUGADORES ACTIVOS
+// ============================================================
+function getActivePlayers(data) {
+  const players = [];
+  if(data && data.host)   players.push(data.host.color);
+  if(data && data.guest)  players.push(data.guest.color);
+  if(data && data.guest2) players.push(data.guest2.color);
+  if(data && data.guest3) players.push(data.guest3.color);
+  return players;
+}
+
+// nextTurn solo entre colores activos
+function nextTurn(cur, data) {
+  const active = getActivePlayers(data || gameState);
+  if(active.length === 0) return cur;
+  const idx = active.indexOf(cur);
+  return active[(idx + 1) % active.length];
+}
+
+// ============================================================
+// TIMER DE TURNO (30 segundos como Ludo Club)
+// ============================================================
+function startTimer() {
+  clearTimer();
+  timerSeconds = TURN_TIME;
+  updateTimerUI(timerSeconds);
+  turnTimer = setInterval(() => {
+    timerSeconds--;
+    updateTimerUI(timerSeconds);
+    if(timerSeconds <= 0) {
+      clearTimer();
+      if(myTurn) {
+        showToast("⏰ ¡Tiempo agotado! Turno perdido");
+        passTurn();
+      }
+    }
+  }, 1000);
+}
+
+function clearTimer() {
+  if(turnTimer) { clearInterval(turnTimer); turnTimer = null; }
+  updateTimerUI(TURN_TIME);
+}
+
+function updateTimerUI(secs) {
+  const timerEl = document.getElementById("turn-timer");
+  if(!timerEl) return;
+  timerEl.textContent = secs + "s";
+  timerEl.style.color = secs <= 10 ? "#e74c3c" : "#FFD700";
+  timerEl.style.transform = secs <= 10 ? "scale(1.2)" : "scale(1)";
+}
 
 // ============================================================
 // LOBBY
@@ -84,8 +142,8 @@ window.createRoom = async function() {
   roomId = Math.floor(1000+Math.random()*9000).toString();
   myRole = "host";
   const state = buildInitialState();
-  state.host = { name: myName, color: myColor };
-  state.turn = myColor;
+  state.host   = { name: myName, color: myColor };
+  state.turn   = myColor;
   state.status = "waiting";
   await set(ref(db,`rooms/${roomId}`), state);
   document.getElementById("room-code-text").textContent = roomId;
@@ -97,18 +155,34 @@ window.joinRoom = async function() {
   myName = document.getElementById("player-name").value.trim() || "Amigo";
   roomId = document.getElementById("room-input").value.trim();
   if(roomId.length !== 4){ showToast("❌ Código inválido"); return; }
-  myRole = "guest";
+
   const snap = await get(ref(db,`rooms/${roomId}`));
   if(!snap.exists()){ showToast("❌ Sala no encontrada"); return; }
   const data = snap.val();
-  if(data.host && data.host.color === myColor) {
-    const others = Object.keys(COLS).filter(c=>c!==myColor);
-    myColor = others[0];
+
+  // Máximo 4 jugadores
+  const active = getActivePlayers(data);
+  if(active.length >= 4){ showToast("❌ Sala llena (máx 4 jugadores)"); return; }
+
+  // Evitar color repetido
+  let chosenColor = myColor;
+  if(active.includes(chosenColor)) {
+    const available = Object.keys(COLS).filter(c => !active.includes(c));
+    if(available.length === 0){ showToast("❌ No hay colores disponibles"); return; }
+    chosenColor = available[0];
+    myColor = chosenColor;
+    showToast(`🎨 Color cambiado a ${myColor}`);
   }
-  await update(ref(db,`rooms/${roomId}`), {
-    guest: { name: myName, color: myColor },
-    status: "playing"
-  });
+
+  // Asignar slot
+  let slot = "guest";
+  if(active.length === 2) slot = "guest2";
+  if(active.length === 3) slot = "guest3";
+  myRole = slot;
+
+  const updates = { status: "playing" };
+  updates[slot] = { name: myName, color: myColor };
+  await update(ref(db,`rooms/${roomId}`), updates);
   listenRoom();
 };
 
@@ -131,15 +205,44 @@ function listenRoom() {
     if(!snap.exists()) return;
     const data = snap.val();
     gameState = data;
+
     if(data.status==="playing" && document.getElementById("lobby").style.display!=="none") {
       startGame(data);
     }
+
     if(data.status==="playing" || data.status==="won") {
+      const wasMine = myTurn;
       myTurn = data.turn === myColor;
+
+      // Si el turno cayó en color sin jugador → saltarlo automáticamente
+      const active = getActivePlayers(data);
+      if(data.status==="playing" && !active.includes(data.turn)) {
+        update(ref(db,`rooms/${roomId}`), { turn: nextTurn(data.turn, data) });
+        return;
+      }
+
+      // Resetear cuando NO es mi turno
+      if(!myTurn) {
+        rolled = false;
+        diceValue = 0;
+        document.getElementById("dice").textContent = "⚀";
+        clearTimer();
+      }
+
+      // Arrancar timer cuando empieza MI turno
+      if(myTurn && !wasMine) {
+        rolled = false;
+        startTimer();
+      }
+
       updateUI(data);
       drawBoard(data);
     }
-    if(data.status==="won") showWin(data.winner===myColor);
+
+    if(data.status==="won") {
+      clearTimer();
+      showWin(data.winner===myColor);
+    }
   });
 }
 
@@ -149,12 +252,37 @@ function listenRoom() {
 function startGame(data) {
   document.getElementById("lobby").style.display = "none";
   document.getElementById("game").style.display  = "block";
-  const host  = data.host  || {};
-  const guest = data.guest || {};
+
+  // Crear el timer en el DOM
+  if(!document.getElementById("turn-timer")) {
+    const timerEl = document.createElement("div");
+    timerEl.id = "turn-timer";
+    timerEl.style.cssText = `
+      font-family: 'Fredoka One', cursive;
+      font-size: 24px;
+      color: #FFD700;
+      text-align: center;
+      transition: color 0.3s, transform 0.2s;
+      min-width: 50px;
+      font-weight: bold;
+    `;
+    timerEl.textContent = TURN_TIME + "s";
+    const controls = document.querySelector(".controls");
+    if(controls) controls.insertBefore(timerEl, controls.firstChild);
+  }
+
+  // Info jugadores
+  const active = getActivePlayers(data);
+  const oppColor = active.find(c => c !== myColor) || "blue";
+  const allPlayers = [data.host, data.guest, data.guest2, data.guest3].filter(Boolean);
+  const oppData = allPlayers.find(p => p.color === oppColor);
+
   document.getElementById("my-dot").style.background  = COLS[myColor];
-  document.getElementById("opp-dot").style.background = COLS[myRole==="host"? guest.color||"blue" : host.color||"red"];
+  document.getElementById("opp-dot").style.background = COLS[oppColor];
   document.getElementById("my-name-label").textContent  = myName;
-  document.getElementById("opp-name-label").textContent = myRole==="host"? (guest.name||"Rival") : (host.name||"Rival");
+  document.getElementById("opp-name-label").textContent = oppData ? oppData.name : "Rival";
+
+  if(data.turn === myColor) startTimer();
   drawBoard(data);
 }
 
@@ -165,6 +293,7 @@ function updateUI(data) {
   const rollBtn  = document.getElementById("roll-btn");
   const statusEl = document.getElementById("status-msg");
   const turnLbl  = document.getElementById("turn-label");
+
   if(myTurn) {
     turnLbl.textContent = "🎲 ¡Tu turno!";
     if(!rolled) {
@@ -175,9 +304,12 @@ function updateUI(data) {
       statusEl.textContent = `Sacaste ${data.roll} — ¡elige una ficha!`;
     }
   } else {
-    turnLbl.textContent = "⏳ Turno del rival";
-    rollBtn.disabled = true;
-    statusEl.textContent = "Esperando al rival...";
+    const allPlayers = [data.host, data.guest, data.guest2, data.guest3].filter(Boolean);
+    const turnPlayer = allPlayers.find(p => p.color === data.turn);
+    const turnName   = turnPlayer ? turnPlayer.name : "Rival";
+    turnLbl.textContent    = `⏳ Turno de ${turnName}`;
+    rollBtn.disabled       = true;
+    statusEl.textContent   = `Esperando a ${turnName}...`;
   }
 }
 
@@ -186,17 +318,25 @@ function updateUI(data) {
 // ============================================================
 window.rollDice = async function() {
   if(!myTurn || rolled) return;
+  clearTimer();
+
   const val = Math.floor(Math.random()*6)+1;
   diceValue = val;
   rolled = true;
+
   const diceEl = document.getElementById("dice");
   diceEl.classList.add("rolling");
   setTimeout(()=>{ diceEl.classList.remove("rolling"); diceEl.textContent=DICE_FACES[val-1]; },500);
+
   await update(ref(db,`rooms/${roomId}`),{ roll:val, rolledBy:myColor });
+
   setTimeout(()=>{
     if(!gameState) return;
     const movables = getMovablePieces(val, gameState.pieces[myColor]);
-    if(movables.length===0){ showToast("😔 Sin movimientos"); setTimeout(()=>passTurn(),1200); }
+    if(movables.length===0){
+      showToast("😔 Sin movimientos");
+      setTimeout(()=>passTurn(),1200);
+    }
   },650);
 };
 
@@ -205,15 +345,15 @@ window.rollDice = async function() {
 // ============================================================
 window.handleBoardClick = function(e) {
   if(!myTurn||!rolled||!gameState) return;
-  const rect  = canvas.getBoundingClientRect();
+  const rect   = canvas.getBoundingClientRect();
   const scaleX = canvas.width/rect.width;
   const scaleY = canvas.height/rect.height;
-  const mx = (e.clientX-rect.left)*scaleX;
-  const my = (e.clientY-rect.top)*scaleY;
-  const cs = canvas.width/SIZE;
-  const col2 = Math.floor(mx/cs);
-  const row  = Math.floor(my/cs);
-  const pieces = gameState.pieces[myColor];
+  const mx     = (e.clientX-rect.left)*scaleX;
+  const my     = (e.clientY-rect.top)*scaleY;
+  const cs     = canvas.width/SIZE;
+  const col2   = Math.floor(mx/cs);
+  const row    = Math.floor(my/cs);
+  const pieces   = gameState.pieces[myColor];
   const movables = getMovablePieces(diceValue, pieces);
   for(let i=0;i<4;i++){
     if(!movables.includes(i)) continue;
@@ -226,7 +366,7 @@ window.handleBoardClick = function(e) {
 };
 
 // ============================================================
-// MOVER
+// MOVER FICHA
 // ============================================================
 async function movePiece(idx) {
   const pieces = JSON.parse(JSON.stringify(gameState.pieces));
@@ -236,6 +376,7 @@ async function movePiece(idx) {
     p.pos += diceValue;
     if(p.pos>=52){ p.pos=52; p.finished=true; }
   }
+
   // Comer rival
   if(p.pos>=0 && p.pos<52){
     const [rr,rc] = PATH[p.pos];
@@ -249,24 +390,27 @@ async function movePiece(idx) {
       });
     });
   }
+
   const allDone = pieces[myColor].every(p=>p.finished);
   const updates = { pieces, movedPiece:idx };
-  if(allDone){ updates.status="won"; updates.winner=myColor; }
-  else { updates.turn = diceValue===6 ? myColor : nextTurn(myColor); }
+
+  if(allDone){
+    updates.status = "won";
+    updates.winner = myColor;
+  } else {
+    updates.turn = diceValue===6 ? myColor : nextTurn(myColor, gameState);
+  }
+
   await update(ref(db,`rooms/${roomId}`), updates);
   rolled=false; diceValue=0;
   document.getElementById("dice").textContent="⚀";
 }
 
 async function passTurn() {
-  await update(ref(db,`rooms/${roomId}`),{ turn:nextTurn(myColor) });
+  await update(ref(db,`rooms/${roomId}`),{ turn: nextTurn(myColor, gameState) });
   rolled=false; diceValue=0;
   document.getElementById("dice").textContent="⚀";
-}
-
-function nextTurn(cur) {
-  const order=["red","blue","green","yellow"];
-  return order[(order.indexOf(cur)+1)%4];
+  clearTimer();
 }
 
 function getMovablePieces(val, pieces) {
@@ -287,7 +431,7 @@ function drawBoard(data) {
   ctx.clearRect(0,0,W,W);
   ctx.fillStyle="#f9f3e3"; ctx.fillRect(0,0,W,W);
   drawPathCells(cs);
-  drawHomeZones(cs);
+  drawHomeZones(cs, data);
   drawCenter(cs);
   if(data&&data.pieces) drawPieces(data.pieces,cs);
   if(myTurn&&rolled&&data) highlightMovable(data.pieces[myColor],cs);
@@ -309,25 +453,30 @@ function drawPathCells(cs) {
   });
 }
 
-function drawHomeZones(cs) {
+// Zonas home: gris con 🔒 si no hay jugador
+function drawHomeZones(cs, data) {
+  const active = data ? getActivePlayers(data) : [];
   const zones={
-    red:{r:0,c:0},blue:{r:0,c:9},
-    green:{r:9,c:9},yellow:{r:9,c:0}
+    red:{r:0,c:0}, blue:{r:0,c:9},
+    green:{r:9,c:9}, yellow:{r:9,c:0}
   };
   Object.entries(zones).forEach(([col,z])=>{
-    const x=z.c*cs,y=z.r*cs;
-    ctx.fillStyle=COLS[col]+"33";
+    const hasPlayer = active.length===0 || active.includes(col);
+    const baseColor = hasPlayer ? COLS[col] : "#888888";
+    const x=z.c*cs, y=z.r*cs;
+    ctx.fillStyle = hasPlayer ? baseColor+"33" : "#88888822";
     ctx.fillRect(x,y,cs*6,cs*6);
-    ctx.strokeStyle=COLS[col]; ctx.lineWidth=2;
+    ctx.strokeStyle=baseColor; ctx.lineWidth=2;
     ctx.strokeRect(x+1,y+1,cs*6-2,cs*6-2);
-    const cx2=x+cs*3,cy2=y+cs*3;
+    const cx2=x+cs*3, cy2=y+cs*3;
     ctx.beginPath(); ctx.arc(cx2,cy2,cs*2,0,Math.PI*2);
-    ctx.fillStyle=COLS[col]+"55"; ctx.fill();
-    ctx.strokeStyle=COLS[col]; ctx.lineWidth=1.5; ctx.stroke();
-    ctx.fillStyle=COLS[col];
+    ctx.fillStyle = hasPlayer ? baseColor+"55" : "#88888833";
+    ctx.fill();
+    ctx.strokeStyle=baseColor; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle = hasPlayer ? baseColor : "#aaaaaa";
     ctx.font=`bold ${cs*0.5}px Fredoka One,cursive`;
     ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText(col.toUpperCase(),cx2,cy2);
+    ctx.fillText(hasPlayer ? col.toUpperCase() : "🔒", cx2, cy2);
   });
 }
 
@@ -390,8 +539,8 @@ function highlightMovable(pieces,cs) {
 function showWin(iWon) {
   const ws=document.getElementById("win-screen");
   ws.style.display="flex";
-  document.getElementById("win-text").textContent  = iWon?"¡GANASTE! 🏆":"Perdiste 😢";
-  document.getElementById("win-sub").textContent   = iWon?"¡Eres el mejor, THE CRIS IF!":"¡Sigue intentándolo!";
+  document.getElementById("win-text").textContent = iWon?"¡GANASTE! 🏆":"Perdiste 😢";
+  document.getElementById("win-sub").textContent  = iWon?"¡Eres el mejor, THE CRIS IF!":"¡Sigue intentándolo!";
   ws.querySelector(".win-emoji").textContent = iWon?"🏆":"😢";
 }
 
