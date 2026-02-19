@@ -407,4 +407,3 @@ window.showToast=showToast;
 
 // Dibujo inicial
 drawBoard(null);
-    
