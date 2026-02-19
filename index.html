@@ -37,54 +37,55 @@
 
   <div class="input-group">
     <label>CÓDIGO DE SALA</label>
-    <input type="text" id="room-input" placeholder="Ej: 4821" maxlength="4"
-           style="text-align:center;font-size:22px;letter-spacing:6px;">
+    <input type="text" id="room-input" placeholder="Ej: 1234" maxlength="4">
   </div>
-  <button class="btn btn-join" onclick="joinRoom()">🚀 UNIRSE A SALA</button>
+  <button class="btn btn-join" onclick="joinRoom()">🚪 UNIRSE A SALA</button>
 
-  <div id="room-display" style="display:none;">
-    <div class="room-code-display" id="room-code-text">----</div>
-    <div class="room-hint">📋 Comparte este código con tu amigo</div>
-    <div class="waiting" id="wait-msg"><span>Esperando a tu amigo...</span></div>
+  <div id="room-display" style="display:none">
+    <div class="room-code-label">📋 Comparte este código:</div>
+    <div id="room-code-text" class="room-code"></div>
+    <div class="waiting-text">⏳ Esperando jugadores...</div>
   </div>
 </div>
 
-<!-- JUEGO -->
-<div id="game">
-  <div class="game-header">
-    <div class="player-badge">
-      <div class="player-dot" id="my-dot"></div>
+<!-- GAME -->
+<div id="game" style="display:none">
+
+  <div class="players-bar">
+    <div class="player-info">
+      <div id="my-dot" class="dot"></div>
       <span id="my-name-label">Tú</span>
     </div>
-    <div class="turn-label" id="turn-label">Tu turno 🎲</div>
-    <div class="player-badge" style="flex-direction:row-reverse;">
-      <div class="player-dot" id="opp-dot"></div>
+    <div id="turn-label" class="turn-label">⏳ Esperando...</div>
+    <div class="player-info">
       <span id="opp-name-label">Rival</span>
+      <div id="opp-dot" class="dot"></div>
     </div>
   </div>
 
-  <div class="board-wrap">
-    <canvas id="board" width="560" height="560" onclick="handleBoardClick(event)"></canvas>
+  <div id="timer" class="timer"></div>
+
+  <canvas id="board" width="420" height="420" onclick="handleBoardClick(event)"></canvas>
+
+  <div class="dice-area">
+    <div id="dice" class="dice">⚀</div>
+    <button id="roll-btn" class="btn btn-roll" onclick="rollDice()" disabled>🎲 TIRAR DADO</button>
+    <div id="status-msg" class="status-msg">Esperando...</div>
   </div>
 
-  <div class="controls">
-    <div class="dice" id="dice">⚀</div>
-    <button class="btn-roll" id="roll-btn" onclick="rollDice()">🎲 TIRAR DADO</button>
-    <div class="status" id="status-msg">Es tu turno, ¡tira el dado!</div>
-  </div>
 </div>
 
 <!-- WIN SCREEN -->
-<div id="win-screen">
+<div id="win-screen" style="display:none" class="win-screen">
   <div class="win-emoji">🏆</div>
-  <div class="win-text" id="win-text">¡GANASTE!</div>
-  <div class="win-sub" id="win-sub">¡Increíble partida!</div>
-  <button class="btn-again" onclick="location.reload()">🔄 JUGAR DE NUEVO</button>
+  <div id="win-text" class="win-text">¡GANASTE!</div>
+  <div id="win-sub" class="win-sub">¡Eres el mejor!</div>
+  <button class="btn btn-create" onclick="location.reload()">🔄 JUGAR DE NUEVO</button>
 </div>
 
 <!-- TOAST -->
-<div class="toast" id="toast"></div>
+<div id="toast" class="toast"></div>
 
-<script src="script.js" type="module"></script>
+<script type="module" src="script.js"></script>
 </body>
 </html>
