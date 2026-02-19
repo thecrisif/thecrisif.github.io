@@ -1,17 +1,90 @@
-nano index.html
-Pega este código:
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Para Talia 💕</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LUDO - THE CRIS IF</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="mensaje">✨ Para la persona más especial de mi vida ✨</div>
-  <canvas id="c"></canvas>
-  <div id="nombre">T A L I A</div>
-  <script src="planet.js"></script>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="title">🎲 LUDO</div>
+  <div class="subtitle">THE CRIS IF EDITION</div>
+</div>
+
+<!-- LOBBY -->
+<div id="lobby">
+  <div class="lobby-title">🎮 ¡A jugar!</div>
+
+  <div class="input-group">
+    <label>TU NOMBRE</label>
+    <input type="text" id="player-name" placeholder="Escribe tu nombre..." maxlength="12">
+  </div>
+
+  <div class="color-label">ELIGE TU COLOR</div>
+  <div class="color-picker">
+    <div class="color-btn red selected" data-color="red"    onclick="selectColor(this)"></div>
+    <div class="color-btn blue"         data-color="blue"   onclick="selectColor(this)"></div>
+    <div class="color-btn green"        data-color="green"  onclick="selectColor(this)"></div>
+    <div class="color-btn yellow"       data-color="yellow" onclick="selectColor(this)"></div>
+  </div>
+
+  <button class="btn btn-create" onclick="createRoom()">🏠 CREAR SALA</button>
+
+  <div class="divider">── O ──</div>
+
+  <div class="input-group">
+    <label>CÓDIGO DE SALA</label>
+    <input type="text" id="room-input" placeholder="Ej: 4821" maxlength="4"
+           style="text-align:center;font-size:22px;letter-spacing:6px;">
+  </div>
+  <button class="btn btn-join" onclick="joinRoom()">🚀 UNIRSE A SALA</button>
+
+  <div id="room-display" style="display:none;">
+    <div class="room-code-display" id="room-code-text">----</div>
+    <div class="room-hint">📋 Comparte este código con tu amigo</div>
+    <div class="waiting" id="wait-msg"><span>Esperando a tu amigo...</span></div>
+  </div>
+</div>
+
+<!-- JUEGO -->
+<div id="game">
+  <div class="game-header">
+    <div class="player-badge">
+      <div class="player-dot" id="my-dot"></div>
+      <span id="my-name-label">Tú</span>
+    </div>
+    <div class="turn-label" id="turn-label">Tu turno 🎲</div>
+    <div class="player-badge" style="flex-direction:row-reverse;">
+      <div class="player-dot" id="opp-dot"></div>
+      <span id="opp-name-label">Rival</span>
+    </div>
+  </div>
+
+  <div class="board-wrap">
+    <canvas id="board" width="560" height="560" onclick="handleBoardClick(event)"></canvas>
+  </div>
+
+  <div class="controls">
+    <div class="dice" id="dice">⚀</div>
+    <button class="btn-roll" id="roll-btn" onclick="rollDice()">🎲 TIRAR DADO</button>
+    <div class="status" id="status-msg">Es tu turno, ¡tira el dado!</div>
+  </div>
+</div>
+
+<!-- WIN SCREEN -->
+<div id="win-screen">
+  <div class="win-emoji">🏆</div>
+  <div class="win-text" id="win-text">¡GANASTE!</div>
+  <div class="win-sub" id="win-sub">¡Increíble partida!</div>
+  <button class="btn-again" onclick="location.reload()">🔄 JUGAR DE NUEVO</button>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script src="script.js" type="module"></script>
 </body>
 </html>
